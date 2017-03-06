@@ -11,22 +11,36 @@ import           Database.SQLite.Simple.FromRow
 import           GHC.Generics
 import           Web.Scotty
 
-data TestField = TestField Int T.Text deriving (Show, Generic)
+data TestField = TestField { testFieldId :: Int
+                           , title :: T.Text
+                           } deriving (Show, Generic)
 
 instance FromRow TestField where
     fromRow = TestField <$> field <*> field
 
 instance ToRow TestField where
-    toRow (TestField id_ str) = toRow (id_, str)
+    toRow (TestField id_ str) = toRow (Only str)
 
 instance ToJSON TestField
 
 instance FromJSON TestField
 
 server :: Connection -> ScottyM ()
-server conn = get "/" $ do
+server conn = do
+    get "/" $ do
         result <- liftIO (query_ conn "select id, title from pingers" :: IO [TestField])
         json result
+    post "/" $ do
+        item <- jsonData :: ActionM TestField
+        newItem <- liftIO (insertTestField conn item)
+        json newItem
+
+insertTestField :: Connection -> TestField -> IO TestField
+insertTestField conn item = do
+    let insertQuery = "insert into pingers (title) values (?)"
+    execute conn insertQuery item
+    id <- lastInsertRowId conn
+    return item { testFieldId = fromIntegral id }
 
 main :: IO ()
 main = do
