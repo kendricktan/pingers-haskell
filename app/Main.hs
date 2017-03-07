@@ -2,48 +2,64 @@
 {-# LANGUAGE DeriveGeneric #-}
 module Main where
 
+import           Web.Scotty
+
 import           Control.Applicative
 import           Control.Monad.IO.Class
 import qualified Data.Text as T
 import           Data.Aeson (FromJSON, ToJSON)
 import           Database.SQLite.Simple
+import           Database.SQLite.Simple.ToRow
 import           Database.SQLite.Simple.FromRow
+import           Database.SQLite.Simple.ToField
 import           GHC.Generics
-import           Web.Scotty
 
-data TestField = TestField { testFieldId :: Int
-                           , title :: T.Text
-                           } deriving (Show, Generic)
 
-instance FromRow TestField where
-    fromRow = TestField <$> field <*> field
+data Checklist = Checklist {
+    checklistId :: Maybe Int
+  , title :: String
+  , checklistItems :: [ChecklistItem]
+} deriving (Show, Generic)
 
-instance ToRow TestField where
-    toRow (TestField id_ str) = toRow (Only str)
+instance FromRow Checklist where
+    fromRow = Checklist <$> field <*> field <*> pure []
+instance ToRow Checklist where
+    toRow c = [toField $ title c]
+instance ToJSON Checklist
+instance FromJSON Checklist
 
-instance ToJSON TestField
+data ChecklistItem = ChecklistItem {
+    checlistItemId :: Maybe Int
+  , itemText :: String
+  , finished :: Bool
+  , checklist :: Int
+} deriving (Show, Generic)
 
-instance FromJSON TestField
+instance FromRow ChecklistItem where
+    fromRow = ChecklistItem <$> field <*> field <*> field <*> field
+instance ToRow ChecklistItem where
+    toRow i = [toField $ itemText i, toField $ finished i, toField $ checklist i]
+instance ToJSON ChecklistItem
+instance FromJSON ChecklistItem
 
 server :: Connection -> ScottyM ()
 server conn = do
-    get "/" $ do
-        result <- liftIO (query_ conn "select id, title from pingers" :: IO [TestField])
-        json result
+    get "/checklists" $ do
+        checklists <- liftIO (query_ conn "select id, title from checklists" :: IO [Checklist])
+        checkWithItems <- liftIO (mapM (setArray conn) checklists)
+        json checkWithItems
     post "/" $ do
-        item <- jsonData :: ActionM TestField
-        newItem <- liftIO (insertTestField conn item)
-        json newItem
+        text "yep!"
 
-insertTestField :: Connection -> TestField -> IO TestField
-insertTestField conn item = do
-    let insertQuery = "insert into pingers (title) values (?)"
-    execute conn insertQuery item
-    id <- lastInsertRowId conn
-    return item { testFieldId = fromIntegral id }
+setArray :: Connection -> Checklist -> IO Checklist
+setArray conn check = do
+    let queryText = "select id, name, finished, checklist from checklistitems where checklist = (?)"
+    items <- liftIO (query conn queryText (Only $ checklistId check) :: IO [ChecklistItem])
+    return check {checklistItems = items}
 
 main :: IO ()
 main = do
     conn <- open "database.db"
-    execute_ conn "CREATE TABLE IF NOT EXISTS pingers (id INTEGER PRIMARY KEY, title TEXT)"
+    execute_ conn "CREATE TABLE IF NOT EXISTS checklists (id INTEGER PRIMARY KEY, title TEXT)"
+    execute_ conn "CREATE TABLE IF NOT EXISTS checklistitems (id INTEGER PRIMARY KEY, name TEXT NOT NULL, finished BOOLEAN NOT NULL, checklist INTEGER NOT NULL)"
     scotty 8080 $ server conn
