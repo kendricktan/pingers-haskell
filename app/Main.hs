@@ -29,7 +29,7 @@ instance ToJSON Checklist
 instance FromJSON Checklist
 
 data ChecklistItem = ChecklistItem {
-    checlistItemId :: Maybe Int
+    checklistItemId :: Maybe Int
   , itemText :: String
   , finished :: Bool
   , checklist :: Int
@@ -49,7 +49,16 @@ server conn = do
         checkWithItems <- liftIO (mapM (setArray conn) checklists)
         json checkWithItems
     post "/" $ do
-        text "yep!"
+        item <- jsonData :: ActionM ChecklistItem
+        newItem <- liftIO (insertChecklist conn item)
+        json newItem
+
+insertChecklist :: Connection -> ChecklistItem -> IO ChecklistItem
+insertChecklist conn item = do
+    let insertQuery = "insert into checklistitems (name, finished, checklist) values (?, ?, ?)"
+    execute conn insertQuery item
+    id <- lastInsertRowId conn
+    return item { checklistItemId = Just (fromIntegral id) }
 
 setArray :: Connection -> Checklist -> IO Checklist
 setArray conn check = do
