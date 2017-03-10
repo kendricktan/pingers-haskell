@@ -1,1 +1,1 @@
-# pingers-haskell
+# Pingers-Haskell
