@@ -1,36 +1,39 @@
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DeriveGeneric #-}
+
 module Main where
 
-import Control.Monad        (msum)
-import Data.Char            (toLower)
-import Happstack.Server     ( Method(GET, POST), FromReqURI(..)
-                            , nullConf, simpleHTTP, method
-                            , toResponse, path, ok, dir, seeOther
-                            )
+import GHC.Generics
+import Data.Monoid ((<>))
+import Control.Applicative
 
-data Subject = World | Haskell
+import qualified Database.SQLite.Simple             as SS
+import qualified Database.SQLite.Simple.FromRow     as SF
+import qualified Data.Aeson                         as DA
+import qualified Web.Scotty                         as WS
 
+-- Data
+data DeviceLog = DeviceLog { deviceId :: String, epoch :: Int } deriving (Show, Generic)
 
-sayHello :: Subject -> String
-sayHello World   = "Hello World"
-sayHello Haskell = "Hello Haskell"
+-- Make our custom type JSON serializable
+instance DA.ToJSON DeviceLog
+instance DA.FromJSON DeviceLog
 
+-- High level routing
+routes :: WS.ScottyM ()
+routes = do
+    WS.get "/:uid/:date" $ do
+        date <- WS.param "date"
+        WS.text (date <> " !")
+    WS.get "/:uid/:ftime/:ttime" $ do
+        uid   <- WS.param "uid"
+        ftime <- WS.param "ftime"
+        ttime <- WS.param "ttime"
+        WS.text (uid <> " " <> ftime <> " - " <> ttime <>"!")
+    WS.post "/hello" $ WS.text "post world"
 
-instance FromReqURI Subject where
-    fromReqURI sub =
-        case map toLower sub of
-            "haskell" -> Just Haskell
-            "world"   -> Just World
-            _         -> Nothing
-
-
+-- Main loop
 main :: IO ()
-main = simpleHTTP nullConf $ msum
-    [ dir "hello"   $ path $ \s -> do method GET
-                                      ok (sayHello s)
-    , dir "hello"   $ path $ \s -> do method POST
-                                      ok ("You posted, " ++ s)
-    , dir "goodbye" $ ok "Goodbye World!"
-    , do method POST
-         ok "You did a POST request"
-    , seeOther "/goodbye" "/goodbye"
-    ]
+main = do
+    conn <- SS.open "database.db"
+    WS.scotty 8000 routes
