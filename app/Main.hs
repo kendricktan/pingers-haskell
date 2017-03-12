@@ -49,6 +49,9 @@ str2epoch s
   | otherwise = read s :: Int
 
 -- IO functions
+getDevices :: SS.Connection -> String -> IO [DeviceLog]
+getDevices conn uid = SS.query conn "SELECT uid, epoch from devices where uid = ?" (uid :: String) :: IO [DeviceLog]
+
 getDevicesDate :: SS.Connection -> String -> Int -> Int -> IO [DeviceLog]
 getDevicesDate conn uid st et = SS.query conn "SELECT uid, epoch from devices where uid = ? and epoch >= ? and epoch <= ?" (uid :: String, st :: Int, et :: Int) :: IO [DeviceLog]
 
