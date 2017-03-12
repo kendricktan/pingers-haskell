@@ -49,8 +49,8 @@ str2epoch s
   | otherwise = read s :: Int
 
 -- IO functions
-getDevicesDate :: SS.Connection -> Int -> Int -> IO [DeviceLog]
-getDevicesDate conn s e = SS.query conn "SELECT uid, epoch from devices where epoch >= ? and epoch <= ?" (s :: Int, e :: Int) :: IO [DeviceLog]
+getDevicesDate :: SS.Connection -> String -> Int -> Int -> IO [DeviceLog]
+getDevicesDate conn uid st et = SS.query conn "SELECT uid, epoch from devices where uid = ? and epoch >= ? and epoch <= ?" (uid :: String, st :: Int, et :: Int) :: IO [DeviceLog]
 
 insertDevice :: SS.Connection -> String -> Int -> IO ()
 insertDevice c u e = SS.execute c "INSERT INTO devices (uid, epoch) VALUES (?, ?)" (DeviceLog u e)
@@ -61,17 +61,19 @@ routes conn = do
     WS.post "/:uid/:date" $ do
         uid <- WS.param "uid"
         date <- WS.param "date"
-        liftIO $ insertDevice conn uid date
-        WS.json (DeviceLog uid date)
+        liftIO $ insertDevice conn uid (str2epoch date)
+        WS.text "inserted!"
     WS.get "/:uid/:date" $ do
-        --date <- WS.param "date"
-        r <- liftIO $ getDevicesDate conn 1 1000
-        WS.json r
+        uid <- WS.param "uid"
+        date <- WS.param "date"
+        devices <- liftIO $ getDevicesDate conn uid (str2epoch date) (str2epoch date + 86400)
+        WS.json devices
     WS.get "/:uid/:ftime/:ttime" $ do
         uid   <- WS.param "uid"
         ftime <- WS.param "ftime"
         ttime <- WS.param "ttime"
-        WS.text (uid <> " " <> ftime <> " - " <> ttime <>"!")
+        devices <- liftIO $ getDevicesDate conn uid (str2epoch ftime) (str2epoch ttime)
+        WS.json devices
     WS.post "/hello" $ WS.text "post world"
 
 -- Main loop
