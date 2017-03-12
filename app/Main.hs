@@ -5,6 +5,10 @@
 
 module Main where
 
+import Data.Time
+import Data.Time.Format
+import Data.Time.Clock.POSIX
+import Data.UnixTime
 import GHC.Generics
 import Data.Monoid ((<>))
 import Control.Applicative
@@ -16,6 +20,10 @@ import qualified Database.SQLite.Simple             as SS
 import qualified Database.SQLite.Simple.FromRow     as SF
 import qualified Data.Aeson                         as DA
 import qualified Web.Scotty                         as WS
+
+-- Time standards
+understandTime :: String -> Int
+understandTime s = (fromIntegral . round . utcTimeToPOSIXSeconds) $ parseTimeOrError True defaultTimeLocale "%Y-%m-%d" s
 
 -- Data type
 data DeviceLog = DeviceLog { deviceId :: String, epoch :: Int } deriving (Show, Generic)
@@ -31,11 +39,18 @@ instance SS.ToRow DeviceLog where
 instance DA.ToJSON DeviceLog
 instance DA.FromJSON DeviceLog
 
--- Helper function
-getDevices :: SS.Connection -> IO String
-getDevices conn = do
-    d <- SS.query_ conn "SELECT uid, epoch from devices" :: IO [DeviceLog]
-    return $ show d
+-- Helper functions
+slice :: Int -> Int -> String -> String
+slice s e = take (e - s + 1) . drop s
+
+str2epoch :: String -> Int
+str2epoch s
+  | '-' `elem` s = understandTime s
+  | otherwise = read s :: Int
+
+-- IO functions
+getDevicesDate :: SS.Connection -> Int -> Int -> IO [DeviceLog]
+getDevicesDate conn s e = SS.query conn "SELECT uid, epoch from devices where epoch >= ? and epoch <= ?" (s :: Int, e :: Int) :: IO [DeviceLog]
 
 insertDevice :: SS.Connection -> String -> Int -> IO ()
 insertDevice c u e = SS.execute c "INSERT INTO devices (uid, epoch) VALUES (?, ?)" (DeviceLog u e)
@@ -47,11 +62,11 @@ routes conn = do
         uid <- WS.param "uid"
         date <- WS.param "date"
         liftIO $ insertDevice conn uid date
-        WS.text "inserted"
+        WS.json (DeviceLog uid date)
     WS.get "/:uid/:date" $ do
-        date <- WS.param "date"
-        r <- liftIO $ getDevices conn
-        WS.text (date <> "\n")
+        --date <- WS.param "date"
+        r <- liftIO $ getDevicesDate conn 1 1000
+        WS.json r
     WS.get "/:uid/:ftime/:ttime" $ do
         uid   <- WS.param "uid"
         ftime <- WS.param "ftime"
