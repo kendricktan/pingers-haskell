@@ -37,13 +37,21 @@ getDevices conn = do
     d <- SS.query_ conn "SELECT uid, epoch from devices" :: IO [DeviceLog]
     return $ show d
 
+insertDevice :: SS.Connection -> String -> Int -> IO ()
+insertDevice c u e = SS.execute c "INSERT INTO devices (uid, epoch) VALUES (?, ?)" (DeviceLog u e)
+
 -- High level routing
 routes :: SS.Connection -> WS.ScottyM ()
 routes conn = do
+    WS.post "/:uid/:date" $ do
+        uid <- WS.param "uid"
+        date <- WS.param "date"
+        liftIO $ insertDevice conn uid date
+        WS.text "inserted"
     WS.get "/:uid/:date" $ do
         date <- WS.param "date"
         r <- liftIO $ getDevices conn
-        WS.text (date <> "!")
+        WS.text (date <> "\n")
     WS.get "/:uid/:ftime/:ttime" $ do
         uid   <- WS.param "uid"
         ftime <- WS.param "ftime"
