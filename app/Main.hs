@@ -49,35 +49,50 @@ str2epoch s
   | otherwise = read s :: Int
 
 -- IO functions
-getDevices :: SS.Connection -> String -> IO [DeviceLog]
-getDevices conn uid = SS.query conn "SELECT uid, epoch from devices where uid = ?" (uid :: String) :: IO [DeviceLog]
+allDevices :: SS.Connection -> IO [DeviceLog]
+allDevices conn = SS.query_ conn "SELECT uid, epoch from devices" :: IO [DeviceLog]
 
-getDevicesDate :: SS.Connection -> String -> Int -> Int -> IO [DeviceLog]
-getDevicesDate conn uid st et = SS.query conn "SELECT uid, epoch from devices where uid = ? and epoch >= ? and epoch <= ?" (uid :: String, st :: Int, et :: Int) :: IO [DeviceLog]
+fromDates :: SS.Connection -> Int -> Int -> IO [DeviceLog]
+fromDates conn ft tt = SS.query conn "SELECT uid, epoch from devices where epoch >= ? and epoch <= ?" (ft :: Int, tt :: Int) :: IO [DeviceLog]
+
+fromDevicesAndDate :: SS.Connection -> String -> Int -> Int -> IO [DeviceLog]
+fromDevicesAndDate conn uid ft tt = SS.query conn "SELECT uid, epoch from devices where uid = ? and epoch >= ? and epoch <= ?" (uid :: String, ft :: Int, tt :: Int) :: IO [DeviceLog]
 
 insertDevice :: SS.Connection -> String -> Int -> IO ()
 insertDevice c u e = SS.execute c "INSERT INTO devices (uid, epoch) VALUES (?, ?)" (DeviceLog u e)
 
+clearDevices :: SS.Connection -> IO ()
+clearDevices c = SS.execute_ c "DELETE FROM devices"
+
 -- High level routing
 routes :: SS.Connection -> WS.ScottyM ()
 routes conn = do
-    WS.post "/:uid/:date" $ do
-        uid <- WS.param "uid"
+    WS.get "/devices" $ do
+        devices <- liftIO $ allDevices conn
+        WS.json devices
+    WS.get "/all/:date" $ do
         date <- WS.param "date"
-        liftIO $ insertDevice conn uid (str2epoch date)
-        WS.text "inserted!"
+        devices <- liftIO $ fromDates conn (str2epoch date) (str2epoch date + 86400)
+        WS.json devices
     WS.get "/:uid/:date" $ do
         uid <- WS.param "uid"
         date <- WS.param "date"
-        devices <- liftIO $ getDevicesDate conn uid (str2epoch date) (str2epoch date + 86400)
+        devices <- liftIO $ fromDevicesAndDate conn uid (str2epoch date) (str2epoch date + 86400)
         WS.json devices
     WS.get "/:uid/:ftime/:ttime" $ do
         uid   <- WS.param "uid"
         ftime <- WS.param "ftime"
         ttime <- WS.param "ttime"
-        devices <- liftIO $ getDevicesDate conn uid (str2epoch ftime) (str2epoch ttime)
+        devices <- liftIO $ fromDevicesAndDate conn uid (str2epoch ftime) (str2epoch ttime)
         WS.json devices
-    WS.post "/hello" $ WS.text "post world"
+    WS.post "/:uid/:date" $ do
+        uid <- WS.param "uid"
+        date <- WS.param "date"
+        liftIO $ insertDevice conn uid (str2epoch date)
+        WS.text "inserted!"
+    WS.post "/clear_data" $ do
+        liftIO $ clearDevices conn
+        WS.text "cleared!"
 
 -- Main loop
 main :: IO ()
