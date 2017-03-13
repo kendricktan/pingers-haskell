@@ -26,26 +26,26 @@ understandTime :: String -> Int
 understandTime s = (fromIntegral . round . utcTimeToPOSIXSeconds) $ parseTimeOrError True defaultTimeLocale "%Y-%m-%d" s
 
 -- Data type
-data Pings = Pings [Int] deriving (Show, Generic)
-data DeviceLog = DeviceLog String Int deriving (Show, Generic)
-data DeviceIds = DeviceIds String deriving (Show, Generic)
-data DevicePings = DevicePings String Pings deriving (Show, Generic)
+data Pings = Pings Int deriving (Show, Generic)
+data DeviceLog = DeviceLog String Pings deriving (Show, Generic)
+data DeviceId = DeviceId String deriving (Show, Generic)
+data DevicePings = DevicePings String [Pings] deriving (Show, Generic)
 
 -- Make our custom type readable/writable from/to DB
-instance SF.FromRow DeviceLog where
-    fromRow = DeviceLog <$> SF.field <*> SF.field
-
-instance SS.ToRow DeviceLog where
-    toRow (DeviceLog i e) = SS.toRow (i, e)
-
-instance SF.FromRow (DevicePings String (Pings [Int])) where
-    fromRow = DevicePings <$> SF.field <*> SF.field
-
-instance SF.FromRow DeviceIds where
-    fromRow = DeviceIds <$> SF.field
-
 instance SF.FromRow Pings where
     fromRow = Pings <$> SF.field
+
+instance SF.FromRow DeviceLog where
+    fromRow = DeviceLog <$> SF.field <*> SF.fromRow
+
+instance SS.ToRow DeviceLog where
+    toRow (DeviceLog i (Pings e)) = SS.toRow (i, e)
+
+instance SF.FromRow DeviceId where
+    fromRow = DeviceId <$> SF.field
+
+instance SF.FromRow DevicePings where
+    fromRow = DevicePings <$> SF.field <*> pure []
 
 -- Make our custom type JSON serializable
 instance DA.ToJSON DeviceLog
@@ -54,8 +54,8 @@ instance DA.FromJSON DeviceLog
 instance DA.ToJSON DevicePings
 instance DA.FromJSON DevicePings
 
-instance DA.ToJSON DeviceIds
-instance DA.FromJSON DeviceIds
+instance DA.ToJSON DeviceId
+instance DA.FromJSON DeviceId
 
 instance DA.ToJSON Pings
 instance DA.FromJSON Pings
@@ -69,18 +69,27 @@ str2epoch s
   | '-' `elem` s = understandTime s
   | otherwise = read s :: Int
 
+-- todo:
+-- remove duplicate copies
+
+-- Nest query results together
+setArray :: SS.Connection -> DevicePings -> IO DevicePings
+setArray conn (DevicePings uid _) = do
+    pings <- liftIO $ SS.query conn "SELECT epoch FROM devices WHERE uid = ?" (SS.Only uid) :: IO [Pings]
+    return $ DevicePings uid pings
+
 -- IO functions
-allDevices :: SS.Connection -> IO [DeviceIds]
-allDevices conn = SS.query_ conn "SELECT uid from devices" :: IO [DeviceIds]
+allDevices :: SS.Connection -> IO [DeviceId]
+allDevices conn = SS.query_ conn "SELECT uid from devices" :: IO [DeviceId]
 
-fromDates :: SS.Connection -> Int -> Int -> IO [DeviceLog]
-fromDates conn ft tt = SS.query conn "SELECT uid, epoch from devices where epoch >= ? and epoch <= ?" (ft :: Int, tt :: Int) :: IO [DeviceLog]
+allFromDates :: SS.Connection -> Int -> Int -> IO [DevicePings]
+allFromDates conn ft tt = SS.query conn "SELECT uid, epoch from devices where epoch >= ? and epoch <= ?" (ft :: Int, tt :: Int) :: IO [DevicePings]
 
-fromDevicesAndDate :: SS.Connection -> String -> Int -> Int -> IO [DeviceLog]
-fromDevicesAndDate conn uid ft tt = SS.query conn "SELECT uid, epoch from devices where uid = ? and epoch >= ? and epoch <= ?" (uid :: String, ft :: Int, tt :: Int) :: IO [DeviceLog]
+fromDevicesAndDate :: SS.Connection -> String -> Int -> Int -> IO [Pings]
+fromDevicesAndDate conn uid ft tt = SS.query conn "SELECT epoch from devices where uid = ? and epoch >= ? and epoch < ?" (uid :: String, ft :: Int, tt :: Int) :: IO [Pings]
 
 insertDevice :: SS.Connection -> String -> Int -> IO ()
-insertDevice c u e = SS.execute c "INSERT INTO devices (uid, epoch) VALUES (?, ?)" (DeviceLog u e)
+insertDevice c u e = SS.execute c "INSERT INTO devices (uid, epoch) VALUES (?, ?)" (DeviceLog u (Pings e))
 
 clearDevices :: SS.Connection -> IO ()
 clearDevices c = SS.execute_ c "DELETE FROM devices"
@@ -93,19 +102,20 @@ routes conn = do
         WS.json devices
     WS.get "/all/:date" $ do
         date <- WS.param "date"
-        devices <- liftIO $ fromDates conn (str2epoch date) (str2epoch date + 86400)
-        WS.json devices
+        duplicate_devices <- liftIO $ allFromDates conn (str2epoch date) (str2epoch date + 86400)
+        -- devices <- liftIO $ mapM (setArray conn) duplicate_devices
+        WS.json duplicate_devices
     WS.get "/:uid/:date" $ do
         uid <- WS.param "uid"
         date <- WS.param "date"
-        devices <- liftIO $ fromDevicesAndDate conn uid (str2epoch date) (str2epoch date + 86400)
-        WS.json devices
+        pings <- liftIO $ fromDevicesAndDate conn uid (str2epoch date) (str2epoch date + 86400)
+        WS.json pings
     WS.get "/:uid/:ftime/:ttime" $ do
         uid   <- WS.param "uid"
         ftime <- WS.param "ftime"
         ttime <- WS.param "ttime"
-        devices <- liftIO $ fromDevicesAndDate conn uid (str2epoch ftime) (str2epoch ttime)
-        WS.json devices
+        pings <- liftIO $ fromDevicesAndDate conn uid (str2epoch ftime) (str2epoch ttime)
+        WS.json pings
     WS.post "/:uid/:date" $ do
         uid <- WS.param "uid"
         date <- WS.param "date"
