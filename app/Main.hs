@@ -120,7 +120,7 @@ routes conn = do
         date <- WS.param "date"
         d_devices <- liftIO $ allFromDates conn
         devices <- liftIO $ mapM (setEpochArray conn (str2epoch date) (str2epoch date + 86400)) (removeDups d_devices)
-        WS.json devices
+        WS.json (toHashMap devices M.empty)
     WS.get "/all/:ftime/:ttime" $ do
         ftime <- WS.param "ftime"
         ttime <- WS.param "ttime"
