@@ -31,6 +31,13 @@ data DeviceLog = DeviceLog String Pings deriving (Show, Generic)
 data DeviceId = DeviceId String deriving (Show, Generic)
 data DevicePings = DevicePings String [Pings] deriving (Show, Generic)
 
+-- Make Eq instance of our custom data types to enable folding
+instance Eq DeviceId where
+    (DeviceId a) == (DeviceId b) = a == b
+
+instance Eq DevicePings where
+    (DevicePings a _) == (DevicePings b _) = a == b
+
 -- Make our custom type readable/writable from/to DB
 instance SF.FromRow Pings where
     fromRow = Pings <$> SF.field
@@ -69,21 +76,24 @@ str2epoch s
   | '-' `elem` s = understandTime s
   | otherwise = read s :: Int
 
--- todo:
--- remove duplicate copies
+-- Remove duplicate Ids
+removeDups :: Eq a => [a] -> [a]
+removeDups = foldl (\seen x -> if x `elem` seen
+                                          then seen
+                                          else seen ++ [x]) []
 
 -- Nest query results together
-setArray :: SS.Connection -> DevicePings -> IO DevicePings
-setArray conn (DevicePings uid _) = do
-    pings <- liftIO $ SS.query conn "SELECT epoch FROM devices WHERE uid = ?" (SS.Only uid) :: IO [Pings]
+setEpochArray :: SS.Connection -> Int -> Int -> DevicePings -> IO DevicePings
+setEpochArray conn ft tt (DevicePings uid _) = do
+    pings <- liftIO $ SS.query conn "SELECT epoch FROM devices WHERE uid = ? and epoch >= ? and epoch < ?" (uid :: String, ft :: Int, tt :: Int) :: IO [Pings]
     return $ DevicePings uid pings
 
 -- IO functions
 allDevices :: SS.Connection -> IO [DeviceId]
 allDevices conn = SS.query_ conn "SELECT uid from devices" :: IO [DeviceId]
 
-allFromDates :: SS.Connection -> Int -> Int -> IO [DevicePings]
-allFromDates conn ft tt = SS.query conn "SELECT uid, epoch from devices where epoch >= ? and epoch <= ?" (ft :: Int, tt :: Int) :: IO [DevicePings]
+allFromDates :: SS.Connection -> IO [DevicePings]
+allFromDates conn = SS.query_ conn "SELECT uid from devices" :: IO [DevicePings]
 
 fromDevicesAndDate :: SS.Connection -> String -> Int -> Int -> IO [Pings]
 fromDevicesAndDate conn uid ft tt = SS.query conn "SELECT epoch from devices where uid = ? and epoch >= ? and epoch < ?" (uid :: String, ft :: Int, tt :: Int) :: IO [Pings]
@@ -99,12 +109,18 @@ routes :: SS.Connection -> WS.ScottyM ()
 routes conn = do
     WS.get "/devices" $ do
         devices <- liftIO $ allDevices conn
-        WS.json devices
+        WS.json (removeDups devices)
     WS.get "/all/:date" $ do
         date <- WS.param "date"
-        duplicate_devices <- liftIO $ allFromDates conn (str2epoch date) (str2epoch date + 86400)
-        -- devices <- liftIO $ mapM (setArray conn) duplicate_devices
-        WS.json duplicate_devices
+        d_devices <- liftIO $ allFromDates conn
+        devices <- liftIO $ mapM (setEpochArray conn (str2epoch date) (str2epoch date + 86400)) (removeDups d_devices)
+        WS.json devices
+    WS.get "/all/:ftime/:ttime" $ do
+        ftime <- WS.param "ftime"
+        ttime <- WS.param "ttime"
+        d_devices <- liftIO $ allFromDates conn
+        devices <- liftIO $ mapM (setEpochArray conn (str2epoch ftime) (str2epoch ttime)) (removeDups d_devices)
+        WS.json devices
     WS.get "/:uid/:date" $ do
         uid <- WS.param "uid"
         date <- WS.param "date"
