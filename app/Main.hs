@@ -16,6 +16,7 @@ import Control.Monad
 import Control.Monad.IO.Class (MonadIO, liftIO)
 
 import qualified Data.Text                          as T
+import qualified Data.Map                           as M
 import qualified Database.SQLite.Simple             as SS
 import qualified Database.SQLite.Simple.FromRow     as SF
 import qualified Data.Aeson                         as DA
@@ -82,6 +83,11 @@ removeDups = foldl (\seen x -> if x `elem` seen
                                           then seen
                                           else seen ++ [x]) []
 
+-- Constructs a HashMap from an Array of DevicePings
+toHashMap :: [DevicePings] -> M.Map String [Pings] -> M.Map String [Pings]
+toHashMap [] m = m
+toHashMap (DevicePings s a : xs) m = toHashMap xs (M.insert s a m)
+
 -- Nest query results together
 setEpochArray :: SS.Connection -> Int -> Int -> DevicePings -> IO DevicePings
 setEpochArray conn ft tt (DevicePings uid _) = do
@@ -120,7 +126,7 @@ routes conn = do
         ttime <- WS.param "ttime"
         d_devices <- liftIO $ allFromDates conn
         devices <- liftIO $ mapM (setEpochArray conn (str2epoch ftime) (str2epoch ttime)) (removeDups d_devices)
-        WS.json devices
+        WS.json (toHashMap devices M.empty)
     WS.get "/:uid/:date" $ do
         uid <- WS.param "uid"
         date <- WS.param "date"
