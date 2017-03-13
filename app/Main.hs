@@ -26,7 +26,10 @@ understandTime :: String -> Int
 understandTime s = (fromIntegral . round . utcTimeToPOSIXSeconds) $ parseTimeOrError True defaultTimeLocale "%Y-%m-%d" s
 
 -- Data type
-data DeviceLog = DeviceLog { deviceId :: String, epoch :: Int } deriving (Show, Generic)
+data Pings = Pings [Int] deriving (Show, Generic)
+data DeviceLog = DeviceLog String Int deriving (Show, Generic)
+data DeviceIds = DeviceIds String deriving (Show, Generic)
+data DevicePings = DevicePings String Pings deriving (Show, Generic)
 
 -- Make our custom type readable/writable from/to DB
 instance SF.FromRow DeviceLog where
@@ -35,9 +38,27 @@ instance SF.FromRow DeviceLog where
 instance SS.ToRow DeviceLog where
     toRow (DeviceLog i e) = SS.toRow (i, e)
 
+instance SF.FromRow (DevicePings String (Pings [Int])) where
+    fromRow = DevicePings <$> SF.field <*> SF.field
+
+instance SF.FromRow DeviceIds where
+    fromRow = DeviceIds <$> SF.field
+
+instance SF.FromRow Pings where
+    fromRow = Pings <$> SF.field
+
 -- Make our custom type JSON serializable
 instance DA.ToJSON DeviceLog
 instance DA.FromJSON DeviceLog
+
+instance DA.ToJSON DevicePings
+instance DA.FromJSON DevicePings
+
+instance DA.ToJSON DeviceIds
+instance DA.FromJSON DeviceIds
+
+instance DA.ToJSON Pings
+instance DA.FromJSON Pings
 
 -- Helper functions
 slice :: Int -> Int -> String -> String
@@ -49,8 +70,8 @@ str2epoch s
   | otherwise = read s :: Int
 
 -- IO functions
-allDevices :: SS.Connection -> IO [DeviceLog]
-allDevices conn = SS.query_ conn "SELECT uid, epoch from devices" :: IO [DeviceLog]
+allDevices :: SS.Connection -> IO [DeviceIds]
+allDevices conn = SS.query_ conn "SELECT uid from devices" :: IO [DeviceIds]
 
 fromDates :: SS.Connection -> Int -> Int -> IO [DeviceLog]
 fromDates conn ft tt = SS.query conn "SELECT uid, epoch from devices where epoch >= ? and epoch <= ?" (ft :: Int, tt :: Int) :: IO [DeviceLog]
@@ -99,7 +120,4 @@ main :: IO ()
 main = do
     conn <- SS.open "database.db"
     SS.execute_ conn "CREATE TABLE IF NOT EXISTS devices (id INTEGER PRIMARY KEY, uid TEXT, epoch INTEGER)"
-    --SS.execute conn "INSERT INTO devices (uid, epoch) VALUES (?, ?)" (DeviceLog "abdef" 456)
-    --r <- SS.query_ conn "SELECT uid, epoch from devices" :: IO [DeviceLog]
-    --mapM_ print r
     WS.scotty 8000 $ routes conn
