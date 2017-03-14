@@ -30,6 +30,9 @@ executable pingers-haskell-exe
                      , transformers
                      , sqlite-simple
                      , text
+                     , time
+                     , unix-time
+                     , containers
   default-language:    Haskell2010
 
 test-suite pingers-haskell-test
